@@ -1,0 +1,159 @@
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+from googleapiclient.discovery import build
+import google.generativeai as genai
+import re
+
+# -------------------- CONFIG --------------------
+YOUTUBE_API_KEY = "AIzaSyCJbfc8_3UqQBzrcIQQMrrI7OrOzNNrlXM"
+GEMINI_API_KEY = "AIzaSyAZpScGgi7W9XaRqouSaA1ttlRuh4fMn-g"
+
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-1.5-flash")
+youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+
+# -------------------- HELPERS --------------------
+def get_channel_id(channel_url):
+    # Remove query parameters (e.g., ?si=...)
+    channel_url = channel_url.split('?')[0]
+
+    # Check for "channel/ID" format
+    if "channel/" in channel_url:
+        return channel_url.split("channel/")[1]
+
+    # Check for handle (e.g., @codebasics)
+    match = re.search(r"(?:https?:\/\/)?(?:www\.)?youtube\.com\/@([a-zA-Z0-9\-_]+)", channel_url)
+    if match:
+        return "@" + match.group(1)
+
+    return None
+
+def fetch_channel_data(channel_id):
+    try:
+        if '@' in channel_id:
+            request = youtube.search().list(q=channel_id, type='channel', part='snippet', maxResults=1)
+            response = request.execute()
+            if 'items' not in response or not response['items']:
+                return None, None
+            channel_id = response['items'][0]['snippet']['channelId']
+
+        stats = youtube.channels().list(part="snippet,statistics,contentDetails", id=channel_id).execute()
+        if 'items' not in stats or not stats['items']:
+            return None, None
+
+        info = stats['items'][0]
+        uploads_playlist_id = info['contentDetails']['relatedPlaylists']['uploads']
+        return info, uploads_playlist_id
+    except Exception as e:
+        st.error(f"API Error: {e}")
+        return None, None
+
+def fetch_recent_videos(playlist_id, max_results=10):
+    try:
+        request = youtube.playlistItems().list(
+            part="snippet",
+            playlistId=playlist_id,
+            maxResults=max_results
+        )
+        response = request.execute()
+        if 'items' not in response:
+            return []
+        videos = []
+        for item in response['items']:
+            video_id = item['snippet']['resourceId']['videoId']
+            title = item['snippet']['title']
+            published = item['snippet']['publishedAt']
+            videos.append((video_id, title, published))
+        return videos
+    except Exception as e:
+        st.warning(f"Video fetch error: {e}")
+        return []
+
+def fetch_video_stats(video_ids):
+    try:
+        if not video_ids:
+            return pd.DataFrame()
+        request = youtube.videos().list(part="statistics,snippet", id=",".join(video_ids))
+        response = request.execute()
+        if 'items' not in response:
+            return pd.DataFrame()
+        data = []
+        for item in response['items']:
+            stats = item['statistics']
+            snippet = item['snippet']
+            data.append({
+                'title': snippet['title'],
+                'views': int(stats.get('viewCount', 0)),
+                'likes': int(stats.get('likeCount', 0)),
+                'comments': int(stats.get('commentCount', 0))
+            })
+        return pd.DataFrame(data)
+    except Exception as e:
+        st.warning(f"Stats fetch error: {e}")
+        return pd.DataFrame()
+
+def generate_ai_suggestions(video_titles):
+    try:
+        if not video_titles:
+            return "No video titles to analyze."
+        titles_combined = "\n".join(video_titles)
+        prompt = f"""
+You are a YouTube content strategist.
+
+Given the following recent video titles, suggest:
+1. 3 new high-potential video topics for the next upload
+2. How to improve content engagement (thumbnails, topics, etc.)
+3. Short summary of channel direction
+
+Recent Titles:
+{titles_combined}
+"""
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"AI error: {e}"
+
+# -------------------- STREAMLIT UI --------------------
+st.set_page_config(page_title="📊 YouTube Analytics", layout="centered")
+st.title("📊 YouTube Analytics App")
+st.write("Enter a YouTube channel URL to get insights.")
+
+channel_url = st.text_input("YouTube Channel URL")
+
+if st.button("Analyze Channel"):
+    with st.spinner("Fetching data..."):
+        channel_id = get_channel_id(channel_url)
+        if not channel_id:
+            st.error("❌ Invalid YouTube channel URL.")
+        else:
+            info, playlist_id = fetch_channel_data(channel_id)
+            if not info:
+                st.error("❌ Unable to fetch channel data. Please check the URL.")
+            else:
+                st.subheader(f"📺 Channel: {info['snippet']['title']}")
+                st.write(f"**Subscribers:** {int(info['statistics']['subscriberCount']):,}")
+                st.write(f"**Total Views:** {int(info['statistics']['viewCount']):,}")
+                st.write(f"**Total Videos:** {int(info['statistics']['videoCount']):,}")
+
+                videos = fetch_recent_videos(playlist_id, max_results=10)
+                video_ids = [v[0] for v in videos]
+                df = fetch_video_stats(video_ids)
+
+                if not df.empty:
+                    st.subheader("📈 Recent Videos Stats")
+                    st.dataframe(df)
+
+                    st.subheader("📊 Views Chart")
+                    fig, ax = plt.subplots()
+                    ax.barh(df['title'], df['views'], color='skyblue')
+                    ax.invert_yaxis()
+                    ax.set_xlabel("Views")
+                    ax.set_title("Recent Video Views")
+                    st.pyplot(fig)
+
+                    st.subheader("💡 AI Suggestions")
+                    suggestions = generate_ai_suggestions(df['title'].tolist())
+                    st.markdown(suggestions)
+                else:
+                    st.warning("No video stats found.")
