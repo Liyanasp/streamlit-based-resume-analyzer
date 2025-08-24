@@ -1,0 +1,56 @@
+import streamlit as st
+import fitz  # PyMuPDF
+import google.generativeai as genai
+import os
+
+# --- CONFIG ---
+st.set_page_config(page_title="Resume Analyzer", layout="centered")
+
+# --- GEMINI SETUP ---
+genai.configure(api_key="AIzaSyAZpScGgi7W9XaRqouSaA1ttlRuh4fMn-g")  # replace with your actual key
+
+# Load Gemini 2.0 Flash model
+model = genai.GenerativeModel("gemini-1.5-flash")
+
+# --- Functions ---
+def extract_text_from_pdf(uploaded_file):
+    text = ""
+    with fitz.open(stream=uploaded_file.read(), filetype="pdf") as doc:
+        for page in doc:
+            text += page.get_text()
+    return text
+
+def get_resume_feedback(resume_text):
+    prompt = f"""
+You are a professional resume reviewer and career expert. Analyze the following resume text and provide detailed suggestions to improve it.
+Check for the following:
+
+1. Missing sections (Objective, Skills, Education, Experience, Projects, Certifications).
+2. Grammar, clarity, and conciseness.
+3. ATS (Applicant Tracking System) compatibility.
+4. Add any missing skills or keywords relevant to tech jobs (like Python, SQL, ML).
+5. Provide a final summary with actionable improvements.
+
+Resume:
+\"\"\"
+{resume_text}
+\"\"\"
+"""
+    response = model.generate_content(prompt)
+    return response.text
+
+# --- Streamlit UI ---
+st.title("📄 Resume Analyzer with Gemini Flash")
+st.write("Upload your resume (PDF) to receive suggestions for improvement using Gemini 2.0 Flash AI.")
+
+uploaded_file = st.file_uploader("Upload Resume (PDF)", type=["pdf"])
+
+if uploaded_file is not None:
+    with st.spinner("Extracting text and analyzing..."):
+        resume_text = extract_text_from_pdf(uploaded_file)
+        if resume_text.strip() == "":
+            st.error("No text found in the PDF. Please upload a valid resume.")
+        else:
+            feedback = get_resume_feedback(resume_text)
+            st.subheader("📋 AI-Powered Resume Suggestions:")
+            st.markdown(feedback)
