@@ -1,0 +1,73 @@
+import streamlit as st
+import os
+import json
+import re
+import google.generativeai as genai
+
+# Configure Gemini API 2.0
+genai.configure(api_key=os.getenv("AIzaSyBSCL6P5jGC2ufntKmakRMPWEF3oKtzQtA"))
+
+# Initialize the Gemini 1.5 Flash model (part of API v2.0)
+model = genai.GenerativeModel("models/gemini-1.5-flash")  # <- This is the official Gemini 2.0 Flash endpoint
+
+# Streamlit UI
+st.title("🎬 Gemini 2.0 Flash - Movie Recommender")
+st.markdown("Describe your movie taste, and get smart movie picks!")
+
+# User input
+genres = st.multiselect("🎞️ Favorite genres:", ["Sci-Fi", "Romance", "Drama", "Action", "Fantasy", "Comedy", "Thriller"])
+actors = st.text_input("🎭 Favorite actors (comma-separated):")
+keywords = st.text_input("📚 Plot themes you enjoy (e.g. time travel, revenge, love triangle):")
+
+if st.button("🎥 Recommend Movies"):
+    if not (genres or actors or keywords):
+        st.warning("Please enter at least one preference.")
+    else:
+        with st.spinner("Thinking with Gemini 2.0 Flash..."):
+
+            # Gemini Prompt
+            prompt = f"""
+You are a helpful movie recommendation assistant. Based on the user's taste, recommend 3 real movies in this **exact JSON format**:
+
+[
+  {{
+    "title": "Movie Title",
+    "poster_url": "Valid image URL",
+    "plot": "Brief summary",
+    "reasons": ["Why it matches the user's preferences"]
+  }},
+  ...
+]
+
+User Preferences:
+- Genres: {', '.join(genres)}
+- Actors: {actors}
+- Plot keywords: {keywords}
+
+Use real movie titles and accurate poster URLs. Tailor the reasons to the user input.
+Respond with **only the JSON**, no extra text.
+"""
+
+            try:
+                # Call Gemini 2.0 API (1.5 Flash model)
+                response = model.generate_content(prompt)
+                raw_text = response.text
+
+                # Extract and parse the JSON
+                json_block = re.search(r"\[\s*{.*}\s*\]", raw_text, re.DOTALL)
+                if json_block:
+                    movies = json.loads(json_block.group())
+                    for movie in movies:
+                        st.image(movie["poster_url"], width=250)
+                        st.subheader(movie["title"])
+                        st.write(f"📝 {movie['plot']}")
+                        st.markdown("**🎯 Why it fits you:**")
+                        for reason in movie["reasons"]:
+                            st.write(f"- {reason}")
+                        st.markdown("---")
+                else:
+                    st.error("Couldn't parse a valid JSON response. Please try again.")
+                    st.text(raw_text)
+
+            except Exception as e:
+                st.error(f"❌ Error from Gemini: {e}")
