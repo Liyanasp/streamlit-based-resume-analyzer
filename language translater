@@ -1,0 +1,73 @@
+import streamlit as st
+import speech_recognition as sr
+from pydub import AudioSegment
+import google.generativeai as genai
+import tempfile
+import os
+
+# -------------------- Gemini Setup --------------------
+genai.configure(api_key="AIzaSyAZpScGgi7W9XaRqouSaA1ttlRuh4fMn-g")  # Replace with your key
+model = genai.GenerativeModel("gemini-1.5-flash")
+
+# -------------------- Transcribe Audio --------------------
+def transcribe_audio(audio_file):
+    recognizer = sr.Recognizer()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
+        sound = AudioSegment.from_file(audio_file)
+        sound.export(temp_wav.name, format="wav")
+
+        with sr.AudioFile(temp_wav.name) as source:
+            audio = recognizer.record(source)
+            try:
+                text = recognizer.recognize_google(audio)
+                return text
+            except sr.UnknownValueError:
+                return "❌ Could not understand audio."
+            except sr.RequestError:
+                return "❌ Speech recognition service error."
+
+# -------------------- AI Translator + Quiz --------------------
+def get_translation_and_quiz(text, target_lang):
+    prompt = f"""
+You are a multilingual language tutor.
+
+1. Translate the following passage into **{target_lang}**.
+2. Then, generate a 3-question quiz (MCQ or Fill in the Blanks) based on the content to test the student's understanding.
+
+Text:
+\"\"\"
+{text}
+\"\"\"
+"""
+    response = model.generate_content(prompt)
+    return response.text
+
+# -------------------- Streamlit App --------------------
+st.set_page_config(page_title="Language Tutor", layout="centered")
+st.title("🌍 Language Tutor with Gemini AI")
+st.write("Upload text or audio to get AI-powered **translations and quizzes**.")
+
+option = st.radio("Choose input type:", ["📄 Text", "🎤 Audio"])
+
+text_input = ""
+if option == "📄 Text":
+    text_input = st.text_area("Enter your passage here:")
+
+elif option == "🎤 Audio":
+    uploaded_audio = st.file_uploader("Upload an audio file (.mp3 or .wav)", type=["mp3", "wav"])
+    if uploaded_audio is not None:
+        with st.spinner("Transcribing audio..."):
+            text_input = transcribe_audio(uploaded_audio)
+        st.success("Transcription Complete!")
+        st.text_area("Transcribed Text", text_input)
+
+target_language = st.selectbox("Translate to:", ["French", "Spanish", "German", "Tamil", "Hindi", "Japanese"])
+
+if st.button("Translate & Generate Quiz"):
+    if not text_input.strip():
+        st.warning("Please provide text input.")
+    else:
+        with st.spinner("Generating translation and quiz..."):
+            result = get_translation_and_quiz(text_input, target_language)
+        st.subheader("📘 Translation & Quiz:")
+        st.markdown(result)
